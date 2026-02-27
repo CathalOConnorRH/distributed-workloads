@@ -19,6 +19,7 @@ package support
 import (
 	trainerclient "github.com/kubeflow/trainer/v2/pkg/client/clientset/versioned"
 	kubeflowclient "github.com/kubeflow/training-operator/pkg/client/clientset/versioned"
+	olmclient "github.com/operator-framework/operator-lifecycle-manager/pkg/api/client/clientset/versioned"
 	rayclient "github.com/ray-project/kuberay/ray-operator/pkg/client/clientset/versioned"
 
 	"k8s.io/client-go/dynamic"
@@ -33,6 +34,7 @@ import (
 	imagev1 "github.com/openshift/client-go/image/clientset/versioned"
 	machinev1 "github.com/openshift/client-go/machine/clientset/versioned"
 	routev1 "github.com/openshift/client-go/route/clientset/versioned"
+	kueueoperatorclient "github.com/openshift/kueue-operator/pkg/generated/clientset/versioned"
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 )
@@ -43,26 +45,30 @@ type Client interface {
 	Kubeflow() kubeflowclient.Interface
 	JobSet() jobsetclient.Interface
 	Kueue() kueueclient.Interface
+	KueueOperator() kueueoperatorclient.Interface
 	Machine() machinev1.Interface
 	Route() routev1.Interface
 	Image() imagev1.Interface
 	Ray() rayclient.Interface
 	Dynamic() dynamic.Interface
 	Storage() storageclient.StorageV1Interface
+	OLM() olmclient.Interface
 }
 
 type testClient struct {
-	core     kubernetes.Interface
-	trainer  trainerclient.Interface
-	kubeflow kubeflowclient.Interface
-	jobset   jobsetclient.Interface
-	kueue    kueueclient.Interface
-	machine  machinev1.Interface
-	route    routev1.Interface
-	image    imagev1.Interface
-	ray      rayclient.Interface
-	dynamic  dynamic.Interface
-	storage  storageclient.StorageV1Interface
+	core          kubernetes.Interface
+	trainer       trainerclient.Interface
+	kubeflow      kubeflowclient.Interface
+	jobset        jobsetclient.Interface
+	kueue         kueueclient.Interface
+	kueueOperator kueueoperatorclient.Interface
+	machine       machinev1.Interface
+	route         routev1.Interface
+	image         imagev1.Interface
+	ray           rayclient.Interface
+	dynamic       dynamic.Interface
+	storage       storageclient.StorageV1Interface
+	olm           olmclient.Interface
 }
 
 var _ Client = (*testClient)(nil)
@@ -87,6 +93,10 @@ func (t *testClient) Kueue() kueueclient.Interface {
 	return t.kueue
 }
 
+func (t *testClient) KueueOperator() kueueoperatorclient.Interface {
+	return t.kueueOperator
+}
+
 func (t *testClient) Machine() machinev1.Interface {
 	return t.machine
 }
@@ -109,6 +119,10 @@ func (t *testClient) Dynamic() dynamic.Interface {
 
 func (t *testClient) Storage() storageclient.StorageV1Interface {
 	return t.storage
+}
+
+func (t *testClient) OLM() olmclient.Interface {
+	return t.olm
 }
 
 func newTestClient(cfg *rest.Config) (Client, *rest.Config, error) {
@@ -148,6 +162,11 @@ func newTestClient(cfg *rest.Config) (Client, *rest.Config, error) {
 		return nil, nil, err
 	}
 
+	kueueOperatorClient, err := kueueoperatorclient.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	machineClient, err := machinev1.NewForConfig(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -178,17 +197,24 @@ func newTestClient(cfg *rest.Config) (Client, *rest.Config, error) {
 		return nil, nil, err
 	}
 
+	olmClient, err := olmclient.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	return &testClient{
-		core:     kubeClient,
-		trainer:  trainerClient,
-		kubeflow: kubeflowClient,
-		jobset:   jobsetClient,
-		kueue:    kueueClient,
-		machine:  machineClient,
-		route:    routeClient,
-		image:    imageClient,
-		ray:      rayClient,
-		dynamic:  dynamicClient,
-		storage:  storageClient,
+		core:          kubeClient,
+		trainer:       trainerClient,
+		kubeflow:      kubeflowClient,
+		jobset:        jobsetClient,
+		kueue:         kueueClient,
+		kueueOperator: kueueOperatorClient,
+		machine:       machineClient,
+		route:         routeClient,
+		image:         imageClient,
+		ray:           rayClient,
+		dynamic:       dynamicClient,
+		storage:       storageClient,
+		olm:           olmClient,
 	}, cfg, nil
 }

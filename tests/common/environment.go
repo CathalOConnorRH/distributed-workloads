@@ -19,14 +19,16 @@ package common
 import (
 	"flag"
 	"os"
+	"os/exec"
 	"slices"
+	"strings"
 
 	. "github.com/opendatahub-io/distributed-workloads/tests/common/support"
 )
 
 const (
-	// The environment variable for namespace where ODH is installed to.
-	odhNamespaceEnvVar = "ODH_NAMESPACE"
+	// The environment variable referring to image simulating sleep condition in container
+	sleepImageEnvVar = "SLEEP_IMAGE"
 	// Name of the authenticated Notebook user
 	notebookUserName = "NOTEBOOK_USER_NAME"
 	// Token of the authenticated Notebook user
@@ -59,14 +61,6 @@ var testTiers = []string{tierSmoke, tierSanity, tier1, tier2, tier3, preUpgrade,
 
 var testTierParam string
 
-func GetOpenDataHubNamespace(t Test) string {
-	ns, ok := os.LookupEnv(odhNamespaceEnvVar)
-	if !ok {
-		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify namespace where ODH is installed to.", odhNamespaceEnvVar)
-	}
-	return ns
-}
-
 func GetNotebookUserName(t Test) string {
 	name, ok := os.LookupEnv(notebookUserName)
 	if !ok {
@@ -89,6 +83,49 @@ func GetNotebookUserPassword(t Test) string {
 		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify token of the authenticated Notebook password.", notebookUserPassword)
 	}
 	return password
+}
+
+// GenerateNotebookUserToken generates an OpenShift token using oc login with username and password
+func GenerateNotebookUserToken(t Test) string {
+	userName := GetNotebookUserName(t)
+	password := GetNotebookUserPassword(t)
+
+	// Use own kubeconfig file to retrieve user token to keep it separated from main test credentials
+	tempFile, err := os.CreateTemp("", "custom-kubeconfig-")
+	if err != nil {
+		t.T().Fatalf("Failed to create temp kubeconfig file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	// Login by oc CLI using username and password
+	cmd := exec.Command("oc", "login", "-u", userName, "-p", password, GetOpenShiftApiUrl(t), "--insecure-skip-tls-verify=true", "--kubeconfig="+tempFile.Name())
+	out, err := cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			t.T().Logf("Error running 'oc login' command: %v\n", exitError)
+			t.T().Logf("Output: %s\n", out)
+			t.T().Logf("Error output: %s\n", exitError.Stderr)
+		} else {
+			t.T().Logf("Error running 'oc login' command: %v\n", err)
+		}
+		t.T().FailNow()
+	}
+
+	// Use oc CLI to retrieve user token from kubeconfig
+	cmd = exec.Command("oc", "whoami", "--show-token", "--kubeconfig="+tempFile.Name())
+	out, err = cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			t.T().Logf("Error running 'oc whoami' command: %v\n", exitError)
+			t.T().Logf("Output: %s\n", out)
+			t.T().Logf("Error output: %s\n", exitError.Stderr)
+		} else {
+			t.T().Logf("Error running 'oc whoami' command: %v\n", err)
+		}
+		t.T().FailNow()
+	}
+
+	return strings.TrimSpace(string(out))
 }
 
 func GetNotebookImage(t Test) string {
@@ -117,6 +154,10 @@ func GetHuggingFaceToken(t Test) string {
 		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify HuggingFace token to download models.", huggingfaceTokenEnvVar)
 	}
 	return token
+}
+
+func GetSleepImage() string {
+	return lookupEnvOrDefault(sleepImageEnvVar, "gcr.io/k8s-staging-perf-tests/sleep@sha256:8d91ddf9f145b66475efda1a1b52269be542292891b5de2a7fad944052bab6ea")
 }
 
 func init() {

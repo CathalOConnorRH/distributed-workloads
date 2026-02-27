@@ -2,6 +2,8 @@ package kfto
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,11 +14,64 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	openshiftclient "github.com/openshift/client-go/config/clientset/versioned"
-
 	. "github.com/opendatahub-io/distributed-workloads/tests/common"
 	. "github.com/opendatahub-io/distributed-workloads/tests/common/support"
 )
+
+var (
+	initialTrainingOperatorState string
+	initialKueueState            string
+)
+
+func TestMain(m *testing.M) {
+	var code int
+	var setupFailed bool
+
+	// Capture initial TrainingOperator state before running any tests
+	initialTrainingOperatorState = CaptureComponentState(DefaultDSCName, "trainingoperator")
+	fmt.Printf("Initial TrainingOperator managementState: %s\n", initialTrainingOperatorState)
+
+	// Setup TrainingOperator to Managed if not already
+	if initialTrainingOperatorState != "Managed" {
+		if err := SetupComponent(DefaultDSCName, "trainingoperator", StateManaged); err != nil {
+			fmt.Printf("Setup failed: %v\n", err)
+			fmt.Println("Skipping test execution due to setup failure ...")
+			setupFailed = true
+			code = 1
+		}
+	} else {
+		fmt.Println("Setup: Skipping TrainingOperator setup as it is already set to Managed in DataScienceCluster")
+	}
+
+	// Capture initial Kueue state before running any tests
+	initialKueueState = CaptureComponentState(DefaultDSCName, "kueue")
+	fmt.Printf("Initial Kueue managementState: %s\n", initialKueueState)
+
+	// Run all tests only if setup succeeded
+	if !setupFailed {
+		code = m.Run()
+	}
+
+	// TearDown TrainingOperator: Only set to Removed if it was not already Managed before tests
+	if initialTrainingOperatorState != "Managed" {
+		if err := TearDownComponent(DefaultDSCName, "trainingoperator"); err != nil {
+			fmt.Printf("TearDown: Failed to set TrainingOperator to Removed in DataScienceCluster: %v\n", err)
+		}
+	} else {
+		fmt.Println("TearDown: Skipping TrainingOperator teardown as Initial TrainingOperator managementState was Managed in DataScienceCluster")
+	}
+
+	// TearDown Kueue: Only set to Removed if it was not already Unmanaged before tests
+	if initialKueueState != "Unmanaged" {
+		if err := TearDownComponent(DefaultDSCName, "kueue"); err != nil {
+			fmt.Printf("TearDown: Failed to set Kueue to Removed: %v\n", err)
+		}
+	} else {
+		fmt.Println("TearDown: Skipping Kueue teardown as Initial Kueue managementState was Unmanaged in DataScienceCluster")
+	}
+
+	os.Exit(code)
+}
 
 func TestKftoSmoke(t *testing.T) {
 	Tags(t, Smoke)
@@ -26,7 +81,8 @@ func TestKftoSmoke(t *testing.T) {
 // runSmoke runs a smoke test for a given deployment and expected image name.
 func runSmoke(t *testing.T, deploymentName string, expectedImage string) {
 	test := With(t)
-	namespace := GetOpenDataHubNamespace(test)
+	namespace, err := GetApplicationsNamespaceFromDSCI(test, DefaultDSCIName)
+	test.Expect(err).NotTo(HaveOccurred())
 
 	test.T().Logf("Waiting for %s deployment to be available ...", deploymentName)
 	test.Eventually(func(g Gomega, ctx context.Context) {
@@ -41,17 +97,7 @@ func runSmoke(t *testing.T, deploymentName string, expectedImage string) {
 	test.T().Logf("%s deployment is available", deploymentName)
 
 	// Determine registry based on cluster environment
-	configClient, err := openshiftclient.NewForConfig(test.Config())
-	test.Expect(err).NotTo(HaveOccurred())
-
-	infra, err := configClient.ConfigV1().Infrastructures().Get(test.Ctx(), "cluster", metav1.GetOptions{})
-	test.Expect(err).NotTo(HaveOccurred())
-
-	envType := infra.Labels["hypershift.openshift.io/managed"]
-	registryName := "registry.redhat.io"
-	if envType == "true" {
-		registryName = "quay.io"
-	}
+	registryName := GetExpectedRegistry(test)
 
 	test.T().Logf("Verifying %s container image is referred from expected registry ...", deploymentName)
 
@@ -81,4 +127,5 @@ func runSmoke(t *testing.T, deploymentName string, expectedImage string) {
 	containerImage := matchedPods[0].Spec.Containers[0].Image
 	test.Expect(containerImage).To(ContainSubstring(registryName + "/rhoai/" + expectedImage))
 	test.T().Logf("%s container image is referred from %s", deploymentName, registryName)
+
 }

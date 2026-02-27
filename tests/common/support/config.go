@@ -54,3 +54,7 @@ func GetOpenShiftApiUrl(test Test) string {
 	test.T().Logf("OpenShift API URL: %s", openShiftApiUrl)
 	return openShiftApiUrl
 }
+
+func GetExpectedRegistry(test Test) string {
+	return "registry.redhat.io"
+}
